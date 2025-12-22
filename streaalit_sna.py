@@ -47,6 +47,17 @@ node_df["group"] = node_df["id"].apply(
     lambda x: "cash" if x.startswith("CASH") else "account"
 )
 
+nodes = [
+    Node(
+        id=row["id"],
+        label=row["label"],
+        size=int(row["size"]),
+        color=row["color"]
+    )
+    for _, row in node_df.iterrows()
+]
+
+
 # ======================
 # FILTER
 # ======================
@@ -56,8 +67,36 @@ min_value = st.sidebar.number_input(
 )
 
 link_df = link_df[link_df["value"] >= min_value]
+edges = [
+    Edge(
+        source=row["from"],
+        target=row["to"],
+        label=f"{row['weight']:,.0f}",
+        width=max(1, row["weight"] / edge_df["weight"].max() * 5)
+    )
+    for _, row in edge_df.iterrows()
+]
+st.set_page_config(layout="wide")
+st.title("Financial Flow Network (Hierarchical)")
+
+agraph(
+    nodes=nodes,
+    edges=edges,
+    config=config
+)
 
 # ======================
 # GRAPH (HIERARCHY)
 # ======================
-st_link_analysis(node_df, link_df)
+# st_link_analysis(node_df, link_df)
+config = Config(
+    width="100%",
+    height=800,
+    directed=True,
+    physics=False,               # ⬅️ MATIKAN FORCE
+    hierarchical=True,           # ⬅️ MODE HIERARKI
+    nodeHighlightBehavior=True,
+    highlightColor="#F7A7A6",
+    collapsible=True
+)
+
