@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from st_link_analysis import st_link_analysis
+from streamlit_agraph import Node, Edge, Config
 
 st.set_page_config(layout="wide")
 
