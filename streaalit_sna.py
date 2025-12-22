@@ -9,7 +9,28 @@ st.title("💸 Financial Flow Network (Hierarchical)")
 # LOAD DATA
 # ======================
 df = pd.read_csv("dataset/data.csv", sep=";")
-
+df["TGL/TRANS"] = pd.to_datetime(
+    df["TGL/TRANS"],
+    format="%d/%m/%Y",
+    errors="coerce"
+)
+def node_role(node_id):
+    if node_id.startswith("CASH"):
+        return "cash"
+    if node_id in ["MANDIRI|3", "BNI|321"]:
+        return "hub"
+    if node_id.startswith("EDC") or node_id.startswith("AFK"):
+        return "merchant"
+    return "normal"
+def node_style(node_id):
+    role = node_role(node_id)
+    if role == "cash":
+        return "#f2cf5b", 35
+    if role == "hub":
+        return "#e45756", 30
+    if role == "merchant":
+        return "#2f2f2f", 20
+    return "#b279ff", 18
 def make_node(bank, norek):
     bank = str(bank).strip().upper()
     norek = str(norek).strip()
@@ -32,7 +53,8 @@ for _, r in df.iterrows():
         edges_raw.append({
             "source": make_node(r["BANK"], r["NO REK"]),
             "target": make_node(r["BANK LAWAN"], r["NO REK LAWAN"]),
-            "value": parse_amount(r["MUTASI"])
+            "value": parse_amount(r["MUTASI"]),
+            "date": r["TGL/TRANS"]
         })
 
 edge_df = pd.DataFrame(edges_raw)
@@ -70,6 +92,9 @@ edge_df = edge_df[edge_df["value"] >= min_value]
 # ======================
 # BUILD GRAPH
 # ======================
+
+color, size = node_style(row.id)
+
 nodes = [
     Node(
         id=row.id,
@@ -84,11 +109,16 @@ edges = [
     Edge(
         source=row.source,
         target=row.target,
-        label=f"{row.value:,.0f}",
+        label=(
+            f"{row.date.strftime('%d-%m-%Y')} | {row.value:,.0f}"
+            if pd.notna(row.date)
+            else f"{row.value:,.0f}"
+        ),
         width=max(1, row.value / edge_df["value"].max() * 5)
     )
     for row in edge_df.itertuples()
 ]
+
 
 # ======================
 # HIERARCHICAL CONFIG
