@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
-from st_link_analysis import st_link_analysis
-from streamlit_agraph import Node, Edge, Config
+from streamlit_agraph import Node, Edge, Config, agraph
 
 st.set_page_config(layout="wide")
+st.title("💸 Financial Flow Network (Hierarchical)")
 
 # ======================
 # LOAD DATA
@@ -23,81 +23,84 @@ def parse_amount(x):
     return float(str(x).replace(".", "").replace(",", "."))
 
 # ======================
-# LINKS
+# EDGES
 # ======================
-links = []
+edges_raw = []
 
 for _, r in df.iterrows():
     if r["JENIS TRANSAKSI"] in ["TRANSFER KELUAR", "PAYMENT"]:
-        links.append({
+        edges_raw.append({
             "source": make_node(r["BANK"], r["NO REK"]),
             "target": make_node(r["BANK LAWAN"], r["NO REK LAWAN"]),
             "value": parse_amount(r["MUTASI"])
         })
 
-link_df = pd.DataFrame(links)
+edge_df = pd.DataFrame(edges_raw)
 
 # ======================
-# NODES
+# NODE METRICS
 # ======================
-nodes = pd.unique(link_df[["source", "target"]].values.ravel())
-
-node_df = pd.DataFrame(nodes, columns=["id"])
-node_df["label"] = node_df["id"]
-node_df["group"] = node_df["id"].apply(
-    lambda x: "cash" if x.startswith("CASH") else "account"
+node_weight = (
+    edge_df.groupby("source")["value"]
+    .sum()
+    .rename("size")
 )
 
-nodes = [
-    Node(
-        id=row["id"],
-        label=row["label"],
-        size=int(row["size"]),
-        color=row["color"]
-    )
-    for _, row in node_df.iterrows()
-]
+node_ids = pd.unique(edge_df[["source", "target"]].values.ravel())
 
+node_df = pd.DataFrame({"id": node_ids})
+node_df["label"] = node_df["id"]
+node_df["size"] = node_df["id"].map(node_weight).fillna(1)
+node_df["size"] = (node_df["size"] / node_df["size"].max()) * 30 + 10
+
+node_df["color"] = node_df["id"].apply(
+    lambda x: "#e45756" if x.startswith("CASH") else "#4c78a8"
+)
 
 # ======================
-# FILTER
+# STREAMLIT FILTER
 # ======================
 min_value = st.sidebar.number_input(
-    "Minimum Transaction",
+    "Minimum Transaction Value",
     value=10_000_000
 )
 
-link_df = link_df[link_df["value"] >= min_value]
+edge_df = edge_df[edge_df["value"] >= min_value]
+
+# ======================
+# BUILD GRAPH
+# ======================
+nodes = [
+    Node(
+        id=row.id,
+        label=row.label,
+        size=int(row.size),
+        color=row.color
+    )
+    for row in node_df.itertuples()
+]
+
 edges = [
     Edge(
-        source=row["from"],
-        target=row["to"],
-        label=f"{row['weight']:,.0f}",
-        width=max(1, row["weight"] / edge_df["weight"].max() * 5)
+        source=row.source,
+        target=row.target,
+        label=f"{row.value:,.0f}",
+        width=max(1, row.value / edge_df["value"].max() * 5)
     )
-    for _, row in edge_df.iterrows()
+    for row in edge_df.itertuples()
 ]
-st.set_page_config(layout="wide")
-st.title("Financial Flow Network (Hierarchical)")
-
-agraph(
-    nodes=nodes,
-    edges=edges,
-    config=config
-)
 
 # ======================
-# GRAPH (HIERARCHY)
+# HIERARCHICAL CONFIG
 # ======================
-# st_link_analysis(node_df, link_df)
 config = Config(
     width="100%",
     height=800,
     directed=True,
-    physics=False,               # ⬅️ MATIKAN FORCE
-    hierarchical=True,           # ⬅️ MODE HIERARKI
+    physics=False,
+    hierarchical=True,
     nodeHighlightBehavior=True,
-    highlightColor="#F7A7A6",
     collapsible=True
 )
 
+agraph(nodes=nodes, edges=edges, config=config)
