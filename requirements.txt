@@ -2,4 +2,3 @@ streamlit
 pandas
 streamlit-agraph
 PyYAML
-base64
