@@ -3,63 +3,76 @@ banks:
     color: "#00aa13"
     icon: "mobile"
     shape: "icon"
+    image_file: "assets/gopay_logo.png"
 
   ovo:
     color: "#4b2aad"
     icon: "wallet"
     shape: "icon"
+    image_file: "assets/ovo_logo.png"
 
   shopeepay:
     color: "#ee4d2d"
     icon: "shopping-cart"
     shape: "icon"
+    image_file: "assets/shopeepay_logo.png"
 
   seabank:
     color: "#0061ff"
     icon: "university"
     shape: "icon"
+    image_file: "assets/seabank_logo.png"
 
   bri:
     color: "#00529b"
     icon: "university"
     shape: "icon"
+    image_file: null
 
   mandiri:
     color: "#003d79"
     icon: "university"
     shape: "icon"
+    image_file: null
 
   bca:
     color: "#1f4ed8"
     icon: "university"
     shape: "icon"
+    image_file: null
 
   bni:
     color: "#f15a24"
     icon: "university"
     shape: "icon"
+    image_file: null
 
   btn:
     color: "#0a7dc2"
     icon: "university"
     shape: "icon"
+    image_file: null
 
   jago:
     color: "#f57c00"
     icon: "university"
     shape: "icon"
+    image_file: "assets/jago_logo.png"
 
   bsi:
     color: "#1f7f5c"
     icon: "university"
     shape: "icon"
+    image_file: null
 
   cimb:
     color: "#d71920"
     icon: "university"
     shape: "icon"
+    image_file: null
 
 default:
   color: "#9e9e9e"
   icon: "circle"
   shape: "dot"
+  image_file: null
