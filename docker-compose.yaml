@@ -1,0 +1,9 @@
+services:
+  sna-app:
+    build: .
+    container_name: streamlit_sna
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+    restart: always
