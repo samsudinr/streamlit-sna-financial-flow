@@ -55,33 +55,6 @@ def load_bank_config():
 
 BANK_CFG = load_bank_config()
 
-st.sidebar.header("🏦 Bank Legend")
-
-for bank, cfg in BANK_CFG.get("banks", {}).items():
-    st.sidebar.markdown(
-        f"""
-        <div style="display:flex; align-items:center; gap:8px;">
-            <div style="
-                width:14px;
-                height:14px;
-                background:{cfg.get('color', '#999')};
-                border-radius:50%;
-            "></div>
-            <span>{bank.upper()}</span>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-st.sidebar.markdown("---")
-
-# st.sidebar.header("🔍 Focus Analysis")
-# search_id = st.sidebar.text_input("Cari Account ID (Bank|Norek)", "").strip().upper()
-
-# Tombol untuk reset pencarian
-# if st.sidebar.button("Clear Search"):
-#     search_id = ""
-
 def make_node(bank, norek):
     bank = str(bank).strip().upper()
     norek = str(norek).strip()
@@ -161,6 +134,73 @@ if search_id:
     else:
         st.sidebar.success(f"✅ Menampilkan koneksi untuk: {search_id}")
 
+def assign_levels_by_date(df):
+    # Urutkan berdasarkan kolom 'date' (karena ini edge_df)
+    levels = {}
+    current_level = 0
+
+    for _, row in df.sort_values("date").iterrows():
+        if row["source"] not in levels:
+            levels[row["source"]] = current_level
+        if row["target"] not in levels:
+            levels[row["target"]] = current_level + 1
+        current_level += 1
+
+    return levels
+
+def assign_levels_lr_time(df):
+    df = df.sort_values("date")
+    levels = {}
+    max_level = 4  # BATASI
+
+    for _, r in df.iterrows():
+        if r["source"] not in levels:
+            levels[r["source"]] = 0
+        if r["target"] not in levels:
+            levels[r["target"]] = min(levels[r["source"]] + 1, max_level)
+
+    return levels
+
+def assign_levels_lr(df):
+    sources = set(df["source"])
+    targets = set(df["target"])
+
+    roots = sources - targets
+    sinks = targets - sources
+    intermediates = sources & targets
+
+    levels = {}
+
+    for n in roots:
+        levels[n] = 0
+    for n in intermediates:
+        levels[n] = 1
+    for n in sinks:
+        levels[n] = 2
+
+    return levels
+
+def assign_levels_topdown(df, root_nodes):
+    from collections import deque
+
+    levels = {}
+    queue = deque()
+
+    for r in root_nodes:
+        levels[r] = 0
+        queue.append(r)
+
+    while queue:
+        node = queue.popleft()
+        for _, row in df[df["source"] == node].iterrows():
+            tgt = row["target"]
+            if tgt not in levels:
+                levels[tgt] = levels[node] + 1
+                queue.append(tgt)
+
+    return levels
+
+
 edge_summary = edge_df.groupby(["source", "target"]).agg({
     "value": "sum",
     "date": "max"
@@ -188,68 +228,6 @@ def get_base64_image(image_path):
         return None
     return None
 
-nodes = []
-base_dir = Path(__file__).resolve().parent
-
-node_ids = pd.unique(edge_summary[["source", "target"]].values.ravel())
-
-
-# mutasi_out = edge_df.sort_values('date', ascending=False).groupby('source').apply(
-#     lambda x: "".join([
-#         f"<div>• {row['date'].strftime('%d/%m/%y')}: <span style='color:#e74c3c;'>-Rp{row['value']:,.0f}</span></div>" 
-#         for _, row in x.head(5).iterrows()
-#     ])
-# ).to_dict()
-
-# # 2. Rangkuman Mutasi Masuk (Target)
-# mutasi_in = edge_df.sort_values('date', ascending=False).groupby('target').apply(
-#     lambda x: "".join([
-#         f"<div>• {row['date'].strftime('%d/%m/%y')}: <span style='color:#27ae60;'>+Rp{row['value']:,.0f}</span></div>" 
-#         for _, row in x.head(5).iterrows()
-#     ])
-# ).to_dict()
-
-for nid in node_ids:
-    style = node_style(nid)
-    is_searched = search_id.lower() in nid.lower() if search_id else False
-
-    short_label = nid.split("|")[0].upper()
-
-    bank_name, norek = nid.split("|") if "|" in nid else (nid, "-")
-    total_val = node_weight.get(nid, 0)
-
-    # detail_in = mutasi_in.get(nid, "<i>Tidak ada mutasi masuk</i>")
-    # detail_out = mutasi_out.get(nid, "<i>Tidak ada mutasi keluar</i>")
-
-    hover_info = (
-        f"INSTITUSI: {bank_name}\n"
-        f"NO. REKENING: {norek}\n"
-        f"TOTAL MUTASI: Rp{total_val:,.0f}"
-    )
-
-    local_path = style.get("image_file")
-    node_image = None
-    if local_path:
-        full_path = base_dir / local_path
-        node_image = get_base64_image(full_path)
-
-    node_kwargs = {
-        "id": nid,
-        "label": short_label,
-        "title": hover_info,
-        "size": 25,
-        "borderWidth": 4 if is_searched else 1,
-        "color": style.get("color", "#999999"),
-    }
-
-    if node_image:
-        node_kwargs["image"] = node_image
-        node_kwargs["shape"] = "circularImage"
-    else:
-        node_kwargs["shape"] = "dot"
-    
-    nodes.append(Node(**node_kwargs))
-
 max_value = edge_df["value"].max() or 1
 
 edges = []
@@ -263,17 +241,12 @@ for row in edge_summary.itertuples():
         if pd.notna(row.date)
         else f"Rp{row.value:,.0f}"
     )
-    # label = (
-    #     f"{row.date.strftime('%d/%m/%Y')}\nRp{row.value:,.0f}"
-    #     for row in [row] if pd.notna(row.date) else [row] # Logika label Anda
-    # )
     edges.append(
         Edge(
             source=row.source,
             target=row.target,
-            label=label,
-            # color=style_src.get("color", "#999999"),
-            # color=node_style(row.source).get("color", "#999999"),
+            label=f"Rp{row.value:,.0f}",
+            title=f"Tanggal: {row.date.strftime('%d/%m/%Y')}",
             color={
                 "color": "rgba(200, 200, 200, 0.2)", 
                 "highlight": bank_color,
@@ -301,7 +274,7 @@ layout_type = st.sidebar.selectbox(
 # Inisialisasi variabel default
 is_hierarchical = False
 direction = "UD"
-physics_enabled = True
+physics_enabled = False if "Hirarki" in layout_type else True
 solver = "forceAtlas2Based" # Default solver
 opts = {} # Wadah untuk setting spesifik
 
@@ -339,6 +312,65 @@ else: # Jaring Bebas (Force Directed)
         }
     }
 
+nodes = []
+base_dir = Path(__file__).resolve().parent
+
+node_ids = pd.unique(edge_summary[["source", "target"]].values.ravel())
+# Panggil fungsi ini sebelum membuat objek Node
+if layout_type == "Hirarki (Top-Down)":
+    roots = set(edge_df["source"]) - set(edge_df["target"])
+    node_levels = assign_levels_topdown(edge_df, roots)
+
+elif layout_type == "Hirarki (Left-Right)":
+    node_levels = assign_levels_lr(edge_df)
+
+elif layout_type == "Timeline":
+    node_levels = assign_levels_lr_time(edge_df)
+
+else:
+    node_levels = {}
+
+for nid in node_ids:
+    style = node_style(nid)
+    is_searched = search_id.lower() in nid.lower() if search_id else False
+
+    short_label = nid.split("|")[0].upper()
+
+    bank_name, norek = nid.split("|") if "|" in nid else (nid, "-")
+    total_val = node_weight.get(nid, 0)
+
+    hover_info = (
+        f"INSTITUSI: {bank_name}\n"
+        f"NO. REKENING: {norek}\n"
+        f"TOTAL MUTASI: Rp{total_val:,.0f}"
+    )
+
+    local_path = style.get("image_file")
+    node_image = None
+    if local_path:
+        full_path = base_dir / local_path
+        node_image = get_base64_image(full_path)
+
+    node_kwargs = {
+        "id": nid,
+        "label": short_label,
+        "title": hover_info,
+        "size": 25,
+        "borderWidth": 4 if is_searched else 1,
+        "color": style.get("color", "#999999"),
+        "shape": "circularImage" if node_image else "dot"
+    }
+    if is_hierarchical and nid in node_levels:
+        node_kwargs["level"] = node_levels[nid]
+
+    if node_image:
+        node_kwargs["image"] = node_image
+        node_kwargs["shape"] = "circularImage"
+    else:
+        node_kwargs["shape"] = "dot"
+    
+    nodes.append(Node(**node_kwargs))
+
 config = Config(
     width="100%",
     height=800,
@@ -352,8 +384,10 @@ config = Config(
             "hierarchical": {
                 "enabled": is_hierarchical,
                 "direction": direction,
-                "nodeSpacing": 200,
-                "treeSpacing": 200,
+                "sortMethod": "directed",
+                "nodeSpacing": 400,
+                "treeSpacing": 250,
+                "levelSeparation": 600,
                 "blockShifting": True,
                 "edgeMinimization": True,
                 "parentCentralization": True
@@ -373,7 +407,7 @@ config = Config(
             },
             "smooth": {
                 "enabled": True,
-                "type": "curvedCW",
+                "type": "cubicBezier",
                 "roundness": 0.5
             }
         },
@@ -386,38 +420,77 @@ config = Config(
     }
 )
 
-# agraph(nodes=nodes, edges=edges, config=config)
+if nodes:
+    for n in nodes:
+        # Tambahkan spasi yang berbeda untuk tiap arah agar data dianggap baru
+        if direction == "LR":
+            n.label = n.label + " "  # Tambah 1 spasi
+        else:
+            n.label = n.label.strip()
+
+# Buat placeholder kosong
+placeholder = st.empty()
+
+
 selected_node_id = agraph(nodes=nodes, edges=edges, config=config)
 
-# 2. Logika Menampilkan Detail di Sidebar atau Kolom Terpisah
-# -----------------------------------------------------
-if selected_node_id:
-    # Parsing ID (Contoh: BCA|123456)
-    bank_name, norek = selected_node_id.split("|") if "|" in selected_node_id else (selected_node_id, "-")
-    
+if selected_node_id and isinstance(selected_node_id, str):
+
+    bank_name, norek = selected_node_id.split("|")
+
     st.sidebar.markdown("---")
     st.sidebar.subheader("📋 Account Properties")
-    
-    # Menampilkan Detail dengan format rapi (mirip gambar referensi Anda)
-    with st.sidebar.container():
-        st.write(f"**Institusi:** {bank_name}")
-        st.write(f"**No. Rekening:** {norek}")
-        
-        # Ambil total mutasi dari data yang sudah dihitung sebelumnya
-        total_val = node_weight.get(selected_node_id, 0)
-        st.write(f"**Total Mutasi:** Rp{total_val:,.0f}")
-        
-        # Tampilkan Uraian Mutasi dalam Expander
-        with st.sidebar.expander("🔴 Mutasi Keluar (Recent 5)", expanded=True):
-            # Ambil dari dictionary mutasi_out yang kita buat sebelumnya
-            # Kita bersihkan tag HTML-nya karena di st.write tidak perlu
-            rincian_out = edge_df[edge_df['source'] == selected_node_id].head(5)
-            for _, row in rincian_out.iterrows():
-                st.caption(f"• {row['date'].strftime('%d/%m/%y')}: Rp{row['value']:,.0f}")
 
-        with st.sidebar.expander("🟢 Mutasi Masuk (Recent 5)", expanded=True):
-            rincian_in = edge_df[edge_df['target'] == selected_node_id].head(5)
-            for _, row in rincian_in.iterrows():
-                st.caption(f"• {row['date'].strftime('%d/%m/%y')}: Rp{row['value']:,.0f}")
-else:
-    st.sidebar.info("💡 Klik pada salah satu Node untuk melihat rincian mutasi.")
+    total_val = node_weight.get(selected_node_id, 0)
+    st.sidebar.write(f"**Institusi:** {bank_name}")
+    st.sidebar.write(f"**No Rekening:** {norek}")
+    st.sidebar.write(f"**Total Mutasi:** Rp{total_val:,.0f}")
+
+    # =========================
+    # BUAT TABEL MUTASI
+    # =========================
+    tx_df = edge_df[
+        (edge_df["source"] == selected_node_id) |
+        (edge_df["target"] == selected_node_id)
+    ].copy()
+
+    if tx_df.empty:
+        st.sidebar.info("Tidak ada mutasi untuk akun ini.")
+    else:
+        # Tandai arah transaksi
+        tx_df["Arah"] = tx_df.apply(
+            lambda r: "KELUAR" if r["source"] == selected_node_id else "MASUK",
+            axis=1
+        )
+
+        tx_df["Dari"] = tx_df["source"]
+        tx_df["Ke"] = tx_df["target"]
+
+        tx_df = (
+            tx_df[["date", "Arah", "Dari", "Ke", "value"]]
+            .sort_values("date", ascending=False)
+            .rename(columns={
+                "date": "Tanggal",
+                "value": "Nominal"
+            })
+        )
+
+        # Format kolom
+        tx_df["Tanggal"] = tx_df["Tanggal"].dt.strftime("%d/%m/%Y")
+        tx_df["Nominal"] = tx_df["Nominal"].apply(lambda x: f"Rp{x:,.0f}")
+
+        st.sidebar.markdown("### 📑 Riwayat Mutasi")
+
+        st.sidebar.dataframe(
+            tx_df,
+            use_container_width=True,
+            height=300
+        )
+
+        # Optional: download CSV
+        st.sidebar.download_button(
+            "⬇️ Download CSV",
+            tx_df.to_csv(index=False),
+            file_name=f"mutasi_{bank_name}_{norek}.csv",
+            mime="text/csv"
+        )
