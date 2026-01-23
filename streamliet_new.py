@@ -4,7 +4,7 @@ from streamlit_agraph import Node, Edge, Config, agraph
 import yaml
 from pathlib import Path
 import base64
-
+import random
 
 st.set_page_config(
     page_title="Financial Flow Network",
@@ -64,6 +64,21 @@ def make_node(bank, norek):
 
     return f"{bank}|{norek}"
 
+def make_entity(name):
+    name = str(name).strip().upper()
+
+    if name in ["", "-", "EMPTY", "NAN"]:
+        return "KAS BESAR"
+
+    return name
+
+def format_miliar(val):
+    if abs(val) >= 1_000_000_000:
+        return f"{val / 1_000_000_000:.2f} Miliar"
+    elif abs(val) >= 1_000_000:
+        return f"{val / 1_000_000:.2f} Juta"
+    return f"{val:,.0f}"
+
 def parse_amount(x):
     if pd.isna(x):
         return 0
@@ -80,15 +95,20 @@ def node_style(node_id: str):
             
     return BANK_CFG.get("default", {"color": "#999999", "shape": "dot"})
 
+
 edges_raw = []
 
 for _, r in df.iterrows():
     if r["JENIS TRANSAKSI"] in ["TRANSFER KELUAR", "PAYMENT"]:
         edges_raw.append({
-            "source": make_node(r["BANK"], r["NO REK"]),
-            "target": make_node(r["BANK LAWAN"], r["NO REK LAWAN"]),
+            "source": make_entity(r["PEMILIK REKENING"]),
+            "target": make_entity(r["NAMA LAWAN"]),
             "value": parse_amount(r["MUTASI"]),
-            "date": r["TGL/TRANS"]
+            "date": r["TGL/TRANS"],
+            "bank_src": r["BANK"],
+            "bank_tgt": r["BANK LAWAN"],
+            "rek_src": r["NO REK"],
+            "rek_tgt": r["NO REK LAWAN"],
         })
 
 edge_df = pd.DataFrame(edges_raw)
@@ -180,6 +200,56 @@ def assign_levels_lr(df):
 
     return levels
 
+# def assign_stair_lr(df, x_step=250, y_step=140):
+#     from collections import defaultdict, deque
+
+#     sources = set(df["source"])
+#     targets = set(df["target"])
+#     roots = list(sources - targets) or [df["source"].iloc[0]]
+
+#     level_map = {}
+#     level_nodes = defaultdict(list)
+
+#     queue = deque([(r, 0) for r in roots])
+
+#     while queue:
+#         node, lvl = queue.popleft()
+#         if node not in level_map:
+#             level_map[node] = lvl
+#             level_nodes[lvl].append(node)
+
+#             children = df[df["source"] == node]["target"].unique()
+#             for c in children:
+#                 queue.append((c, lvl + 1))
+
+#     positions = {}
+#     for lvl, nodes in level_nodes.items():
+#         for idx, n in enumerate(nodes):
+#             x = lvl * x_step
+#             y = idx * y_step
+#             positions[n] = (x, y)
+
+#     return positions
+
+def assign_stair_lr(df):
+    from collections import deque
+    sources = set(df["source"])
+    targets = set(df["target"])
+    roots = list(sources - targets) or [df["source"].iloc[0]]
+
+    level_map = {}
+    queue = deque([(r, 0) for r in roots])
+
+    while queue:
+        node, lvl = queue.popleft()
+        if node not in level_map:
+            level_map[node] = lvl
+            children = df[df["source"] == node]["target"].unique()
+            for c in children:
+                queue.append((c, lvl + 1))
+    return level_map
+
+
 def assign_levels_topdown(df, root_nodes):
     from collections import deque
 
@@ -218,6 +288,127 @@ node_df = pd.DataFrame({"id": node_ids})
 node_df["size"] = node_df["id"].map(node_weight).fillna(1)
 node_df["size"] = (node_df["size"] / node_df["size"].max()) * 30 + 10
 
+def compute_node_degree(df):
+    from collections import Counter
+    c = Counter()
+    for _, r in df.iterrows():
+        c[r["source"]] += 1
+        c[r["target"]] += 1
+    return c
+
+def assign_staircase_levels(df):
+    # Urutkan berdasarkan tanggal agar tangga mengikuti alur waktu transaksi
+    df_sorted = df.sort_values("date")
+    all_nodes = []
+    for _, row in df_sorted.iterrows():
+        if row["source"] not in all_nodes: 
+            all_nodes.append(row["source"])
+        if row["target"] not in all_nodes: 
+            all_nodes.append(row["target"])
+    
+    # Memberikan level 0, 1, 2, 3... secara unik
+    return {node: i for i, node in enumerate(all_nodes)}
+
+def assign_stair_positions(df, x_step=280, y_step=140):
+    from collections import defaultdict, deque
+
+    degree = compute_node_degree(df)
+
+    sources = set(df["source"])
+    targets = set(df["target"])
+    roots = list(sources - targets) or [df["source"].iloc[0]]
+
+    level_nodes = defaultdict(list)
+    visited = set()
+
+    queue = deque([(r, 0) for r in roots])
+
+    while queue:
+        node, lvl = queue.popleft()
+        if node in visited:
+            continue
+        visited.add(node)
+
+        # 🔥 node besar naik ke level sendiri
+        if degree[node] > 8:
+            lvl += 1
+
+        level_nodes[lvl].append(node)
+
+        for c in df[df["source"] == node]["target"].unique():
+            queue.append((c, lvl + 1))
+
+    positions = {}
+    for lvl, nodes in level_nodes.items():
+        for i, n in enumerate(nodes):
+            x = lvl * x_step
+            y = i * y_step
+            positions[n] = (x, y)
+
+    return positions
+
+def assign_levels_proper_hierarchy(df):
+    from collections import deque
+    
+    # Tentukan root (node yang hanya mengirim, tidak menerima)
+    sources = set(df["source"])
+    targets = set(df["target"])
+    roots = sources - targets
+    
+    # Jika tidak ada root murni (ada loop), ambil node pertama sebagai starting point
+    if not roots:
+        roots = [df["source"].iloc[0]]
+
+    levels = {}
+    queue = deque([(root, 0) for root in roots])
+    
+    while queue:
+        node, lvl = queue.popleft()
+        if node not in levels:
+            levels[node] = lvl
+            # Cari semua target yang dikirim oleh node ini
+            children = df[df["source"] == node]["target"].unique()
+            for child in children:
+                queue.append((child, lvl + 1))
+    
+    # Berikan level default untuk node yang mungkin terlewat
+    all_nodes = pd.unique(df[["source", "target"]].values.ravel())
+    for n in all_nodes:
+        if n not in levels:
+            levels[n] = max(levels.values()) + 1 if levels else 0
+            
+    return levels
+
+def assign_levels_proper_hierarchy(df):
+    from collections import deque
+    
+    # Identifikasi Root (node yang hanya mengirim, tidak pernah menerima)
+    sources = set(df["source"])
+    targets = set(df["target"])
+    roots = sources - targets
+    
+    # Jika ada loop/siklus, ambil node dengan transaksi terbesar sebagai root
+    if not roots:
+        roots = [df.groupby("source")["value"].sum().idxmax()]
+
+    levels = {}
+    queue = deque([(root, 0) for root in roots])
+    visited = set()
+    
+    while queue:
+        node, lvl = queue.popleft()
+        if node not in visited:
+            visited.add(node)
+            # Ambil level tertinggi jika sebuah node punya banyak parent
+            levels[node] = max(levels.get(node, 0), lvl)
+            
+            # Cari anak-anaknya
+            children = df[df["source"] == node]["target"].unique()
+            for child in children:
+                queue.append((child, lvl + 1))
+    
+    return levels
+
 def get_base64_image(image_path):
     import base64
     try:
@@ -241,12 +432,19 @@ for row in edge_summary.itertuples():
         if pd.notna(row.date)
         else f"Rp{row.value:,.0f}"
     )
+    label_miliar = format_miliar(row.value)
     edges.append(
         Edge(
             source=row.source,
             target=row.target,
-            label=f"Rp{row.value:,.0f}",
-            title=f"Tanggal: {row.date.strftime('%d/%m/%Y')}",
+            # label=f"Rp{row.value:,.0f}",
+            label=label_miliar,
+            # title=f"Tanggal: {row.date.strftime('%d/%m/%Y')}",
+            title=(
+                f"Dari: {row.source}\n"
+                f"Ke: {row.target}\n"
+                f"Nominal: Rp{row.value:,.0f}"
+            ),
             color={
                 "color": "rgba(200, 200, 200, 0.2)", 
                 "highlight": bank_color,
@@ -303,16 +501,19 @@ elif "Menyebar" in layout_type:
     }
 else: # Jaring Bebas (Force Directed)
     solver = "barnesHut"
+    is_hierarchical = True
+    direction = "UD"
+    physics_enabled = True
     opts = {
         "barnesHut": {
-            "gravitationalConstant": -8000,
-            "centralGravity": 0.1,
-            "springLength": 300,
+            "gravitationalConstant": -30000,
+            "centralGravity": 0.05,
+            "springLength": 500,
             "avoidOverlap": 1
         }
     }
 
-nodes = []
+
 base_dir = Path(__file__).resolve().parent
 
 node_ids = pd.unique(edge_summary[["source", "target"]].values.ravel())
@@ -320,23 +521,27 @@ node_ids = pd.unique(edge_summary[["source", "target"]].values.ravel())
 if layout_type == "Hirarki (Top-Down)":
     roots = set(edge_df["source"]) - set(edge_df["target"])
     node_levels = assign_levels_topdown(edge_df, roots)
+    # node_levels = assign_levels_proper_hierarchy(edge_df)
 
 elif layout_type == "Hirarki (Left-Right)":
-    node_levels = assign_levels_lr(edge_df)
+    node_levels = assign_stair_lr(edge_df)
 
 elif layout_type == "Timeline":
-    node_levels = assign_levels_lr_time(edge_df)
+    node_levels = assign_stair_lr_time(edge_df)
 
 else:
     node_levels = {}
 
-for nid in node_ids:
+nodes = []
+for i, nid in enumerate(node_ids):
     style = node_style(nid)
     is_searched = search_id.lower() in nid.lower() if search_id else False
 
     short_label = nid.split("|")[0].upper()
 
+    # bank_name, norek = nid.split("|") if "|" in nid else (nid, "-")
     bank_name, norek = nid.split("|") if "|" in nid else (nid, "-")
+    entity_name = nid
     total_val = node_weight.get(nid, 0)
 
     hover_info = (
@@ -353,69 +558,88 @@ for nid in node_ids:
 
     node_kwargs = {
         "id": nid,
-        "label": short_label,
-        "title": hover_info,
-        "size": 25,
+        "label": nid.split("|")[0],
+        "title": hover_info, # Saran: isi title dengan hover_info agar informatif
+        "size": 7,
+        "font": {"size": 9, "multi": True},
         "borderWidth": 4 if is_searched else 1,
         "color": style.get("color", "#999999"),
-        "shape": "circularImage" if node_image else "dot"
     }
-    if is_hierarchical and nid in node_levels:
-        node_kwargs["level"] = node_levels[nid]
 
+    if is_hierarchical and node_levels and nid in node_levels:
+        base_level = node_levels[nid]
+        
+    # LOGIKA GARIS PANJANG/PENDEK:
+        if base_level > 0:
+            # Gunakan random atau logika genap/ganjil agar berstektur
+            # offset = random.choice([1.0, 2, 4]) # 0=normal, 1=lebih panjang
+            group_offset = (i % 5) * 0.8
+            # offset = 4
+            node_kwargs["level"] = base_level + group_offset
+        else:
+            node_kwargs["level"] = base_level
     if node_image:
         node_kwargs["image"] = node_image
         node_kwargs["shape"] = "circularImage"
     else:
-        node_kwargs["shape"] = "dot"
-    
+        node_kwargs["shape"] = "dot"            
     nodes.append(Node(**node_kwargs))
 
 config = Config(
-    width="100%",
-    height=800,
+    width=2000,
+    height=3000,
     directed=True,
-    physics=physics_enabled,   
+    physics=physics_enabled,  # Wajib False untuk layout tangga yang stabil
+    physics_config={
+        "repulsion": {
+            "nodeDistance": 250,   # jarak minimum antar node
+            "centralGravity": 0.1,
+            "springLength": 300,
+            "springConstant": 0.05
+        }
+    },
     hierarchical=is_hierarchical,
-    nodeHighlightBehavior=True,
-    # Hapus physics_config lama agar tidak membingungkan mesin vis.js
     extra_options={
         "layout": {
             "hierarchical": {
                 "enabled": is_hierarchical,
                 "direction": direction,
                 "sortMethod": "directed",
-                "nodeSpacing": 400,
-                "treeSpacing": 250,
-                "levelSeparation": 600,
-                "blockShifting": True,
-                "edgeMinimization": True,
-                "parentCentralization": True
-            }
-        },
-        "interaction": {
-            "hover": True,
-            "selectConnectedEdges": True,
-            "navigationButtons": True
-        },
-        "edges": {
-            "font": {
-                "size": 12,
-                "align": "top",
-                "strokeWidth": 3,
-                "strokeColor": "#ffffff"
-            },
-            "smooth": {
-                "enabled": True,
-                "type": "cubicBezier",
-                "roundness": 0.5
+                "levelSeparation": 600, # jarak antar level (VERTIKAL)
+                "nodeSpacing": 1000, # jarak node dalam 1 level (HORIZONTAL)
+                "treeSpacing": 500,
+                "blockShifting": True,       # Mencegah node ditarik kembali ke tengah
+                "edgeMinimization": True,    # Mencegah garis bertumpuk
+                "parentCentralization": False # Mencegah anak tangga sejajar di bawah induk
             }
         },
         "physics": {
             "enabled": physics_enabled,
             "solver": solver, # Mengambil dari variabel di atas
             **opts,           # Memasukkan dictionary setting spesifik
-            "stabilization": {"enabled": True, "iterations": 200}
+            # "stabilization": {"enabled": True, "iterations": 200}
+        },
+        "edges": {
+            "smooth": {
+                "enabled": True,
+                "type": "cubicBezier", 
+                "forceDirection": "vertical",
+                "roundness": 0.5
+            },
+            "font": {
+                "size": 7, ## <-- Kecilkan angka ini
+                "align": "vertical", # Menaruh teks di atas garis agar lebih rapi
+                "vadjust": 0, # Mengatur jarak vertikal teks agar tidak menempel garis
+                "background": "none", # Memberi background transparan agar terbaca
+                "strokeWidth": 2,    # Hilangkan stroke jika tulisan terlalu kecil
+                "strokeColor": "#ffffff",
+                "color": "#34495e"
+            }
+        },
+        "interaction": {
+            "hover": True,
+            "multiselect": True,
+            "dragNodes": True
         }
     }
 )
@@ -434,9 +658,95 @@ placeholder = st.empty()
 
 selected_node_id = agraph(nodes=nodes, edges=edges, config=config)
 
-if selected_node_id and isinstance(selected_node_id, str):
+if "expanded_entities" not in st.session_state:
+    st.session_state.expanded_entities = set()
+    st.rerun()
 
-    bank_name, norek = selected_node_id.split("|")
+st.markdown("### ⬇️ Download Visual SNA")
+
+format_choice = st.selectbox(
+    "Pilih format file",
+    ["PNG", "JPG", "PDF"],
+    key="download_format"
+)
+
+st.components.v1.html(f"""
+<div style="margin-top:10px;">
+  <button style="
+      padding:10px 20px;
+      background:#2E86DE;
+      color:white;
+      border:none;
+      border-radius:6px;
+      cursor:pointer;
+      font-size:14px;"
+      onclick="downloadGraph()">
+      Download Graph
+  </button>
+</div>
+
+<script>
+function downloadGraph() {{
+    const canvas = document.querySelector("canvas");
+    if (!canvas) {{
+        alert("Graph belum siap");
+        return;
+    }}
+
+    const format = "{format_choice.lower()}";
+    let mime = "image/png";
+    let filename = "sna_graph.png";
+
+    if (format === "jpg") {{
+        mime = "image/jpeg";
+        filename = "sna_graph.jpg";
+    }}
+
+    if (format === "pdf") {{
+        const imgData = canvas.toDataURL("image/png");
+        const pdfWindow = window.open("");
+        pdfWindow.document.write(`
+            <html>
+              <head><title>SNA Graph</title></head>
+              <body style="margin:0">
+                <img src="${{imgData}}" style="width:100%">
+                <script>
+                  window.onload = function() {{
+                    window.print();
+                  }}
+                </script>
+              </body>
+            </html>
+        `);
+        return;
+    }}
+
+    const link = document.createElement("a");
+    link.download = filename;
+    link.href = canvas.toDataURL(mime);
+    link.click();
+}}
+</script>
+""", height=120)
+
+
+# if selected_node_id and isinstance(selected_node_id, str):
+if selected_node_id:
+    # bank_name, norek = selected_node_id.split("|")
+    if selected_node_id in st.session_state.expanded_entities:
+        st.session_state.expanded_entities.remove(selected_node_id)
+    else:
+        st.session_state.expanded_entities.add(selected_node_id)
+
+    if "|" in selected_node_id:
+        # bank_name, norek = selected_node_id.split("|", 1)
+        parts = selected_node_id.split("|", 1)
+        bank_name = parts[0]
+        norek = parts[1]
+    else:
+        # bank_name, norek = selected_node_id, "-"
+        bank_name = selected_node_id
+        norek = "-"
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("📋 Account Properties")
@@ -444,53 +754,19 @@ if selected_node_id and isinstance(selected_node_id, str):
     total_val = node_weight.get(selected_node_id, 0)
     st.sidebar.write(f"**Institusi:** {bank_name}")
     st.sidebar.write(f"**No Rekening:** {norek}")
-    st.sidebar.write(f"**Total Mutasi:** Rp{total_val:,.0f}")
+    st.sidebar.write(f"**Total Mutasi:** Rp{total_val:,.0f} ({format_miliar(total_val)})")
+    # st.sidebar.write(f"**Total Mutasi:** Rp{total_val:,.0f}")
 
-    # =========================
-    # BUAT TABEL MUTASI
-    # =========================
     tx_df = edge_df[
         (edge_df["source"] == selected_node_id) |
         (edge_df["target"] == selected_node_id)
     ].copy()
 
-    if tx_df.empty:
-        st.sidebar.info("Tidak ada mutasi untuk akun ini.")
-    else:
-        # Tandai arah transaksi
+    if not tx_df.empty:
         tx_df["Arah"] = tx_df.apply(
-            lambda r: "KELUAR" if r["source"] == selected_node_id else "MASUK",
-            axis=1
+            lambda r: "KELUAR" if r["source"] == selected_node_id else "MASUK", axis=1
         )
-
-        tx_df["Dari"] = tx_df["source"]
-        tx_df["Ke"] = tx_df["target"]
-
-        tx_df = (
-            tx_df[["date", "Arah", "Dari", "Ke", "value"]]
-            .sort_values("date", ascending=False)
-            .rename(columns={
-                "date": "Tanggal",
-                "value": "Nominal"
-            })
-        )
-
-        # Format kolom
-        tx_df["Tanggal"] = tx_df["Tanggal"].dt.strftime("%d/%m/%Y")
-        tx_df["Nominal"] = tx_df["Nominal"].apply(lambda x: f"Rp{x:,.0f}")
-
-        st.sidebar.markdown("### 📑 Riwayat Mutasi")
-
-        st.sidebar.dataframe(
-            tx_df,
-            use_container_width=True,
-            height=300
-        )
-
-        # Optional: download CSV
-        st.sidebar.download_button(
-            "⬇️ Download CSV",
-            tx_df.to_csv(index=False),
-            file_name=f"mutasi_{bank_name}_{norek}.csv",
-            mime="text/csv"
-        )
+        tx_df = tx_df[["date", "Arah", "source", "target", "value"]].sort_values("date", ascending=False)
+        tx_df["value"] = tx_df["value"].apply(lambda x: f"Rp{x:,.0f}")
+        
+        st.sidebar.dataframe(tx_df, use_container_width=True)
