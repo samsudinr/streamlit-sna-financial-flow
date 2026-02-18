@@ -4,6 +4,86 @@ import streamlit.components.v1 as components
 from pyvis.network import Network
 from pathlib import Path
 import os
+import boto3
+from io import BytesIO
+
+# =====================
+# MINIO CONFIG
+# =====================
+# Jika di Docker, gunakan nama service 'minio'. Jika lokal, gunakan 'localhost'
+MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://localhost:9000")
+MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minio")
+MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minio123")
+
+s3_client = boto3.client(
+    's3',
+    endpoint_url=MINIO_ENDPOINT,
+    aws_access_key_id=MINIO_ACCESS_KEY,
+    aws_secret_access_key=MINIO_SECRET_KEY,
+    region_name='us-east-1'
+)
+
+@st.cache_data
+def load_data_from_minio(bucket_name, object_name):
+    try:
+        response = s3_client.get_object(Bucket=bucket_name, Key=object_name)
+        content = response['Body'].read()
+        if object_name.endswith('.csv'):
+            return pd.read_csv(BytesIO(content), sep=";")
+        else:
+            return pd.read_excel(BytesIO(content))
+    except Exception as e:
+        st.error(f"Gagal mengambil data dari MinIO: {e}")
+        return pd.DataFrame()
+
+# Modifikasi fungsi load_data yang lama agar tetap fleksibel
+@st.cache_data
+def load_data_local(uploaded_file=None, sep=";"):
+    if uploaded_file is not None:
+        file_name = uploaded_file.name
+        if file_name.endswith('.csv'):
+            try:
+                # Coba UTF-8 dulu (Standar)
+                df = pd.read_csv(uploaded_file, sep=sep, encoding='utf-8')
+            except UnicodeDecodeError:
+                # Jika gagal, coba encoding Windows/Excel
+                # 'ISO-8859-1' atau 'cp1252' biasanya berhasil untuk file dari Excel
+                uploaded_file.seek(0) # Reset pointer file ke awal
+                df = pd.read_csv(uploaded_file, sep=sep, encoding='ISO-8859-1')
+        elif file_name.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(uploaded_file)
+        else:
+            st.error("Format file tidak didukung!")
+            return pd.DataFrame()
+    else:
+        base_dir = Path(__file__).resolve().parent
+        data_path_csv = base_dir / "dataset" / "data.csv"
+        data_path_xlsx = base_dir / "dataset" / "data.xlsx"
+
+        if data_path_csv.exists():
+            df = pd.read_csv(data_path_csv, sep=";")
+        elif data_path_xlsx.exists():
+            df = pd.read_excel(data_path_xlsx)
+        else:
+            return pd.DataFrame()
+
+
+    if not df.empty:
+        df["MUTASI"] = df["MUTASI"].astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False).astype(float)
+        df["TGL/TRANS"] = pd.to_datetime(df["TGL/TRANS"], dayfirst=True, errors="coerce")
+        df["PEMILIK REKENING"] = df["PEMILIK REKENING"].fillna("UNKNOWN").astype(str)
+        df["NAMA LAWAN"] = df["NAMA LAWAN"].fillna("UNKNOWN").astype(str)
+    return df
+
+def clean_financial_data(df):
+    if df.empty: return df
+    # Logika pembersihan Anda
+    df["MUTASI"] = df["MUTASI"].astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False).astype(float)
+    df["TGL/TRANS"] = pd.to_datetime(df["TGL/TRANS"], dayfirst=True, errors="coerce")
+    df["PEMILIK REKENING"] = df["PEMILIK REKENING"].fillna("UNKNOWN").astype(str)
+    df["NAMA LAWAN"] = df["NAMA LAWAN"].fillna("UNKNOWN").astype(str)
+    return df
+
 
 # =====================
 # CONFIG & SETUP
@@ -16,31 +96,36 @@ def format_miliar(val):
     elif abs(val) >= 1_000_000:
         return f"{val / 1_000_000:.2f} Juta"
     return f"{val:,.0f}"
-
-@st.cache_data
-def load_data(uploaded_file=None):
-    if uploaded_file is not None:
-        df = pd.read_csv(uploaded_file, sep=";")
-    else:
-        base_dir = Path(__file__).resolve().parent
-        data_path = base_dir / "dataset" / "data.csv"
-        if not data_path.exists(): return pd.DataFrame()
-        df = pd.read_csv(data_path, sep=";")
-
-    if not df.empty:
-        df["MUTASI"] = df["MUTASI"].astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False).astype(float)
-        df["TGL/TRANS"] = pd.to_datetime(df["TGL/TRANS"], dayfirst=True, errors="coerce")
-        df["PEMILIK REKENING"] = df["PEMILIK REKENING"].fillna("UNKNOWN").astype(str)
-        df["NAMA LAWAN"] = df["NAMA LAWAN"].fillna("UNKNOWN").astype(str)
-    return df
+    
 
 st.title("💸 Financial Flow Network (Live Interaktif)")
 # st.info(f"Status Visualisasi: **{layout_type}** | Gravitasi: **{central_gravity}** | Spring: **{spring_length}**")
 
 # SIDEBAR: DATA SOURCE
 st.sidebar.header("📁 Data Source")
-uploaded_file = st.sidebar.file_uploader("Upload CSV Baru", type=["csv"])
-df = load_data(uploaded_file)
+source_type = st.sidebar.radio("Pilih Sumber Data", ["Upload Manual", "MinIO Storage"])
+
+df = pd.DataFrame()
+
+if source_type == "Upload Manual":
+    uploaded_file = st.sidebar.file_uploader("Upload CSV atau Excel", type=["csv", "xlsx", "xls"])
+    sep = ";"
+    if uploaded_file and uploaded_file.name.endswith('.csv'):
+        sep = st.sidebar.selectbox("Separator CSV", [";", ",", "|"], index=0)
+    df = load_data_local(uploaded_file, sep=sep) # Gunakan logika fungsi lama Anda
+    df = clean_financial_data(df)
+
+else:
+    bucket_input = st.sidebar.text_input("Bucket Name", value="my-bucket")
+    file_input = st.sidebar.text_input("File Path (Object Name)", value="dataset/data.csv")
+    if st.sidebar.button("Load dari MinIO"):
+        df = load_data_from_minio(bucket_input, file_input)
+        df = clean_financial_data(df)
+    else:
+        st.info("Masukkan detail bucket dan klik Load.")
+        st.stop()
+
+# df = load_data(uploaded_file, sep=separator)
 
 if df.empty:
     st.warning("⚠️ Dataset tidak ditemukan.")
