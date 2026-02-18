@@ -11,7 +11,7 @@ services:
       - MINIO_ACCESS_KEY=minio
       - MINIO_SECRET_KEY=minio123
     networks:
-      - airflow_network
+      - sna_network
     restart: always
 
   minio:
@@ -42,7 +42,7 @@ services:
     networks:
       - sna_network
     restart: always
-    
+
 networks:
   sna_network:
     driver: bridge
