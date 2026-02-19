@@ -3,3 +3,4 @@ pandas
 streamlit-agraph
 PyYAML
 boto3
+pyvis
