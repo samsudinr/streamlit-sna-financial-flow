@@ -12,8 +12,8 @@ from io import BytesIO
 # =====================
 # Jika di Docker, gunakan nama service 'minio'. Jika lokal, gunakan 'localhost'
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://localhost:9000")
-MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minio")
-MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minio123")
+MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "admin")
+MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "admin123")
 
 s3_client = boto3.client(
     's3',
@@ -28,9 +28,15 @@ def load_data_from_minio(bucket_name, object_name):
     try:
         response = s3_client.get_object(Bucket=bucket_name, Key=object_name)
         content = response['Body'].read()
-        if object_name.endswith('.csv'):
-            return pd.read_csv(BytesIO(content), sep=";")
+        
+        if object_name.lower().endswith('.csv'):
+            try:
+                # Coba utf-8 dulu, jika gagal gunakan latin1
+                return pd.read_csv(BytesIO(content), sep=";", encoding='utf-8')
+            except UnicodeDecodeError:
+                return pd.read_csv(BytesIO(content), sep=";", encoding='ISO-8859-1')
         else:
+            # Untuk .xlsx tidak ada urusan dengan encoding utf-8
             return pd.read_excel(BytesIO(content))
     except Exception as e:
         st.error(f"Gagal mengambil data dari MinIO: {e}")
