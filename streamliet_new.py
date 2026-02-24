@@ -350,122 +350,139 @@ if 'df' in st.session_state:
     # Key unik berdasarkan konfigurasi untuk memaksa refresh komponen
     net_id = f"graph_{layout_type}_{physics_enabled}_{central_gravity}_{spring_length}_{node_distance}"
 
-    # net = Network(height="1000px", width="100%", bgcolor="#0f172a", font_color="white", directed=True)
     net = Network(height="1000px", width="100%", bgcolor="#ffffff", font_color="#333333", directed=True)
 
-    if "Hierarchical" in layout_type:
-        direction = "UD" if "Top-Down" in layout_type else "LR"
-        net.set_options(f"""
-        {{
-        "edges": {{
-            "font": {{ "align": "top", "size": 12, "strokeWidth": 3, "strokeColor": "#0f172a" }},
-            "smooth": {{ "enabled": true, "type": "curvedCW", "roundness": 0.15 }}
-        }},
-        "layout": {{
-            "hierarchical": {{
-            "enabled": true,
-            "direction": "{direction}",
-            "sortMethod": "hubsize",
-            "levelSeparation": 450,
-            "nodeSpacing": 400
-            }}
-        }},
-        "physics": {{
-            "enabled": true,
-            "hierarchicalRepulsion": {{ "nodeDistance": 400, "centralGravity": 0.0 }},
-            "solver": "hierarchicalRepulsion"
-        }}
-        }}
-        """)
-    else:
-        net.set_options(f"""
-        {{
-        "edges": {{
-            "font": {{
-            "align": "top",
-            "size": 11,
-            "strokeWidth": 3,
-            "strokeColor": "#0f172a"
+    try:
+        if "Hierarchical" in layout_type:
+            direction = "UD" if "Top-Down" in layout_type else "LR"
+            net.set_options(f"""
+            {{
+            "edges": {{
+                "font": {{ "align": "top", "size": 12, "strokeWidth": 3, "strokeColor": "#0f172a" }},
+                "smooth": {{ "enabled": true, "type": "curvedCW", "roundness": 0.15 }}
             }},
-            "smooth": {{
-            "enabled": true,
-            "type": "curvedCW",
-            "roundness": 0.2
-            }}
-        }},
-        "physics": {{
-            "enabled": {str(physics_enabled).lower()},
-            "forceAtlas2Based": {{
-            "gravitationalConstant": -100,
-            "centralGravity": 0.01,
-            "springLength": {spring_length},
-            "springConstant": 0.08
+            "layout": {{
+                "hierarchical": {{
+                "enabled": true,
+                "direction": "{direction}",
+                "sortMethod": "hubsize",
+                "levelSeparation": 450,
+                "nodeSpacing": 400
+                }}
             }},
-            "solver": "forceAtlas2Based"
-        }}
-        }}
-        """)
-        
-    added_nodes = set()
-
-    # Gunakan df_grouped hasil agregasi
-    for i, (_, row) in enumerate(df_plot.iterrows()):
-        src, tgt = str(row["PEMILIK REKENING"]), str(row["NAMA LAWAN"])
-        total_val = row["MUTASI"]  # Kita gunakan nama total_val agar jelas ini hasil jumlah
-        freq = row.get("FREKUENSI", 1)
-        
-        # 1. Tambahkan/Cek Nodes
-        for nid in [src, tgt]:
-            if nid not in added_nodes:
-                is_focus = (nid == search_id)
-                # Logika warna: Biru jika dia pengirim (ada di node_sums), Hijau jika penerima murni
-                net.add_node(
-                    nid, 
-                    label=nid, 
-                    color="#dc2626" if is_focus else ("#2563eb" if nid in node_sums else "#16a34a"),
-                    size=30 if is_focus else 15,
-                    shape="dot",
-                    font={'color': '#333333', 'size': 14, 'strokeWidth': 2, 'strokeColor': '#ffffff'},
-                    title=f"Entity: {nid}"
-                )
-                added_nodes.add(nid)
-
-        # 2. Tambahkan Edge (Gunakan total_val untuk value)
-        label_text = f"{format_miliar(total_val)}"
-        if not break_down and freq > 1:
-            label_text += f" | {freq}x transaksi"
-        
-        # Jika mode pecah, berikan roundness yang berbeda untuk setiap garis agar tidak tumpang tindih
-        curve_type = "curvedCW" if src <= tgt else "curvedCCW"
-
-
-        base_roundness = 0.15
-        if break_down:
-            # Menambah lengkungan setiap garis berdasarkan urutan transaksi
-            edge_roundness = base_roundness + (i * 0.2) 
+            "physics": {{
+                "enabled": true,
+                "hierarchicalRepulsion": {{ "nodeDistance": 400, "centralGravity": 0.0 }},
+                "solver": "hierarchicalRepulsion"
+            }}
+            }}
+            """)
         else:
-            edge_roundness = base_roundness
-        
-        # Menentukan warna garis berdasarkan arah (Logika yang Anda minta sebelumnya)
-        if search_id:
-            if src == search_id: edge_color = "#FF3366" 
-            elif tgt == search_id: edge_color = "#22FF88"
-            else: edge_color = "44CCFF"
-        else:
-            edge_color = "rgba(200, 200, 200, 0.5)"
+            net.set_options(f"""
+            {{
+            "edges": {{
+                "font": {{
+                "align": "top",
+                "size": 11,
+                "strokeWidth": 3,
+                "strokeColor": "#0f172a"
+                }},
+                "smooth": {{
+                "enabled": true,
+                "type": "curvedCW",
+                "roundness": 0.2
+                }}
+            }},
+            "physics": {{
+                "enabled": {str(physics_enabled).lower()},
+                "forceAtlas2Based": {{
+                "gravitationalConstant": -100,
+                "centralGravity": 0.01,
+                "springLength": {spring_length},
+                "springConstant": 0.08
+                }},
+                "solver": "forceAtlas2Based"
+            }}
+            }}
+            """)
+            
+        added_nodes = set()
 
-        # Perhatikan: value=total_val (Bukan value=val)
-        net.add_edge(
-            src, tgt, 
-            value=total_val, 
-            label=label_text, 
-            color=edge_color,
-            width=2 if break_down else max(2, min(total_val / 100_000_000, 15)),
-            arrows="to",
-            font={'size': 10, 'color': '#333333', 'strokeWidth': 2, 'strokeColor': '#ffffff'}, # Label putih pinggirannya agar terbaca
-            smooth={'enabled': True, 'type': curve_type, 'roundness': edge_roundness}
-        )
-    
+        # Gunakan df_grouped hasil agregasi
+        for i, (_, row) in enumerate(df_plot.iterrows()):
+            src, tgt = str(row["PEMILIK REKENING"]), str(row["NAMA LAWAN"])
+            total_val = row["MUTASI"]  # Kita gunakan nama total_val agar jelas ini hasil jumlah
+            freq = row.get("FREKUENSI", 1)
+            
+            # 1. Tambahkan/Cek Nodes
+            for nid in [src, tgt]:
+                if nid not in added_nodes:
+                    is_focus = (nid == search_id)
+                    # Logika warna: Biru jika dia pengirim (ada di node_sums), Hijau jika penerima murni
+                    net.add_node(
+                        nid, 
+                        label=nid, 
+                        color="#dc2626" if is_focus else ("#2563eb" if nid in node_sums else "#16a34a"),
+                        size=30 if is_focus else 15,
+                        shape="dot",
+                        font={'color': '#333333', 'size': 14, 'strokeWidth': 2, 'strokeColor': '#ffffff'},
+                        title=f"Entity: {nid}"
+                    )
+                    added_nodes.add(nid)
+
+            # 2. Tambahkan Edge (Gunakan total_val untuk value)
+            label_text = f"{format_miliar(total_val)}"
+            if not break_down and freq > 1:
+                label_text += f" | {freq}x transaksi"
+            
+            # Jika mode pecah, berikan roundness yang berbeda untuk setiap garis agar tidak tumpang tindih
+            curve_type = "curvedCW" if src <= tgt else "curvedCCW"
+
+
+            base_roundness = 0.15
+            if break_down:
+                # Menambah lengkungan setiap garis berdasarkan urutan transaksi
+                edge_roundness = base_roundness + (i * 0.2) 
+            else:
+                edge_roundness = base_roundness
+            
+            # Menentukan warna garis berdasarkan arah (Logika yang Anda minta sebelumnya)
+            if search_id:
+                if src == search_id: edge_color = "#FF3366" 
+                elif tgt == search_id: edge_color = "#22FF88"
+                else: edge_color = "44CCFF"
+            else:
+                edge_color = "rgba(200, 200, 200, 0.5)"
+
+            # Perhatikan: value=total_val (Bukan value=val)
+            net.add_edge(
+                src, tgt, 
+                value=total_val, 
+                label=label_text, 
+                color=edge_color,
+                width=2 if break_down else max(2, min(total_val / 100_000_000, 15)),
+                arrows="to",
+                font={'size': 10, 'color': '#333333', 'strokeWidth': 2, 'strokeColor': '#ffffff'}, # Label putih pinggirannya agar terbaca
+                smooth={'enabled': True, 'type': curve_type, 'roundness': edge_roundness}
+            )
+
+        # GANTI BAGIAN save_graph LAMA DENGAN INI:
+        try:
+            # Jangan gunakan path fisik jika memungkinkan, gunakan temporary path
+            tmp_path = "link_analysis_live.html"
+            net.save_graph(tmp_path)
+            
+            with open(tmp_path, 'r', encoding='utf-8') as f:
+                html_data = f.read()
+            
+            # Tampilkan menggunakan komponen streamlit
+            components.html(html_data, height=1200, scrolling=True)
+        except Exception as e:
+            st.error(f"Gagal generate grafik: {e}")
+
+    except Exception as e:
+        # Pesan ini hanya muncul jika benar-benar ada error di data, bukan karena variabel hilang
+        st.warning(f"Grafik tidak dapat dimuat: {e}")
     # --- LANJUTKAN KODE SNA / NETWORK ANDA DI SINI ---
     # all_entities = sorted(list(set(df["PEMILIK REKENING"].unique()) | ...))
     # dst...
@@ -498,16 +515,3 @@ def format_miliar(val):
 #         components.html(html_data, height=850)
 
 
-# GANTI BAGIAN save_graph LAMA DENGAN INI:
-try:
-    # Jangan gunakan path fisik jika memungkinkan, gunakan temporary path
-    tmp_path = "link_analysis_live.html"
-    net.save_graph(tmp_path)
-    
-    with open(tmp_path, 'r', encoding='utf-8') as f:
-        html_data = f.read()
-    
-    # Tampilkan menggunakan komponen streamlit
-    components.html(html_data, height=1200, scrolling=True)
-except Exception as e:
-    st.error(f"Gagal generate grafik: {e}")
