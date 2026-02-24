@@ -508,6 +508,6 @@ try:
         html_data = f.read()
     
     # Tampilkan menggunakan komponen streamlit
-    components.html(html_data, height=800, scrolling=True)
+    components.html(html_data, height=1200, scrolling=True)
 except Exception as e:
     st.error(f"Gagal generate grafik: {e}")
