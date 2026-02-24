@@ -138,7 +138,7 @@ if menu_utama == "Folder Manager":
     col1, col2 = st.columns(2)
     
     with col1:
-        new_bucket = st.text_input("Nama Folder Baru")
+        new_bucket = st.text_input("Nama Folder Baru (ex: dummy-data)")
         if st.button("➕ Create Folder"):
             if new_bucket:
                 s3_client.create_bucket(Bucket=new_bucket.lower().replace(" ", "-"))
